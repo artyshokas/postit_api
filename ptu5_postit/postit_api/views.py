@@ -1,8 +1,15 @@
+from django.contrib.auth import get_user_model
 from django.shortcuts import render
-from rest_framework import generics, permissions
+from rest_framework import generics, permissions, mixins, status
 from rest_framework.exceptions import ValidationError
+from rest_framework.response import Response
 from django.utils.translation import gettext_lazy as _
 from . import models, serializers
+
+User = get_user_model()
+
+def home(request):
+    return render(request, 'postit_api/index.html')
 
 
 class PostList(generics.ListCreateAPIView):
@@ -12,7 +19,6 @@ class PostList(generics.ListCreateAPIView):
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
-
 
 
 class PostDetail(generics.RetrieveUpdateDestroyAPIView):
@@ -25,15 +31,14 @@ class PostDetail(generics.RetrieveUpdateDestroyAPIView):
         if post.exists():
             return self.destroy(request, *args, **kwargs)
         else:
-            raise ValidationError(_('You cannot delete posts not of your own'))
-
-
+            raise ValidationError(_('You cannot delete posts not of your own.'))
+    
     def put(self, request, *args, **kwargs):
         post = models.Post.objects.filter(pk=kwargs['pk'], user=self.request.user)
         if post.exists():
             return self.update(request, *args, **kwargs)
         else:
-            raise ValidationError(_('You cannot update posts not of your own'))
+            raise ValidationError(_('You cannot change posts not of your own.'))
 
 
 class CommentList(generics.ListCreateAPIView):
@@ -60,11 +65,49 @@ class CommentDetail(generics.RetrieveUpdateDestroyAPIView):
         if comment.exists():
             return self.destroy(request, *args, **kwargs)
         else:
-            raise ValidationError(_('You cannot delete comments not of your own'))
+            raise ValidationError(_('You cannot delete comments not of your own.'))
 
     def put(self, request, *args, **kwargs):
-        post = models.Comment.objects.filter(pk=kwargs['pk'], user=self.request.user)
-        if post.exists():
+        comment = models.Comment.objects.filter(pk=kwargs['pk'], user=self.request.user)
+        if comment.exists():
             return self.update(request, *args, **kwargs)
         else:
-            raise ValidationError(_('You cannot update comments not of your own'))
+            raise ValidationError(_('You cannot change comments not of your own.'))
+
+
+class PostLikeCreate(generics.CreateAPIView, mixins.DestroyModelMixin):
+    serializer_class = serializers.PostLikeSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        post = models.Post.objects.get(pk=self.kwargs['pk'])
+        return models.PostLike.objects.filter(user=user, post=post)
+    
+    def perform_create(self, serializer):
+        if self.get_queryset().exists():
+            raise ValidationError(_('You cannot like a post more than once.'))
+        user = self.request.user
+        post = models.Post.objects.get(pk=self.kwargs['pk'])
+        serializer.save(user=user, post=post)
+
+    def delete(self, request, *args, **kwargs):
+        if self.get_queryset().exists():
+            self.get_queryset().delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        else:
+            raise ValidationError(_('You do not like this post to begin with.'))
+
+
+class UserCreate(generics.CreateAPIView):
+    queryset = User.objects.all()
+    serializer_class = serializers.UserSerializer
+    permission_classes = [permissions.AllowAny]
+
+    def delete(self, request, *args, **kwargs):
+        user = User.objects.filter(pk=request.user.pk)
+        if user.exists():
+            user.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        else:
+            raise ValidationError(_('User does not exist'))
